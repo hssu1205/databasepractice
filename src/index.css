@@ -994,3 +994,73 @@ body {
   border-color: #E63946;
   color: #FFF;
 }
+
+/* Google Login Button */
+.google-login-btn {
+  background: #FFFFFF;
+  border: 4px solid #E6DCD0;
+  border-radius: 20px;
+  padding: 14px 28px;
+  font-family: var(--font-cute);
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--primary-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  box-shadow: 0 6px 0px #E6DCD0;
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  margin-top: 12px;
+}
+
+.google-login-btn:hover {
+  background: #FFFDF9;
+  border-color: #FFA94D;
+  box-shadow: 0 8px 0px #FFA94D;
+  transform: translateY(-2px);
+}
+
+.google-login-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 0px 0px #FFA94D;
+}
+
+.google-icon-svg {
+  width: 24px;
+  height: 24px;
+}
+
+.selection-user-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24px;
+  background: #FFF9F2;
+  border: 2px dashed #E6DCD0;
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.selection-user-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid #FFA94D;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+}
+
+.selection-user-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #4A3E31;
+  margin: 0;
+}
+
+.selection-user-email {
+  font-size: 1.1rem;
+  color: var(--secondary-text);
+  margin: 0;
+}

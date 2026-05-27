@@ -14,15 +14,16 @@ import {
   LogOut,
   Home,
   BarChart3,
-  Image as ImageIcon,
-  Lock,
-  Mail
+  Image as ImageIcon
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { collection, addDoc, serverTimestamp, query, orderBy, limit, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { db, storage, auth } from './firebase';
+
+// Pre-registered Teacher UID from environment variables
+const TEACHER_UID = import.meta.env.VITE_TEACHER_UID || '';
 
 // Emotion metadata matching the cute pastel styles in index.css
 const EMOTIONS = {
@@ -84,10 +85,8 @@ function App() {
   // App Role: 'select' = Landing selector, 'student' = Student flow, 'teacher' = Teacher flow
   const [role, setRole] = useState<'select' | 'student' | 'teacher'>('select');
   
-  // Auth state for teachers
-  const [teacherUser, setTeacherUser] = useState<FirebaseUser | null>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Auth state
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -113,8 +112,11 @@ function App() {
 
   // 1. Listen to Authentication state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setTeacherUser(user);
+    const unsubscribe = onAuthStateChanged(auth, (usr) => {
+      setUser(usr);
+      if (!usr) {
+        setRole('select');
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -293,31 +295,19 @@ function App() {
     }, 'image/jpeg', 0.95);
   };
 
-  // Login handler
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password) return;
-
+  // Google Login handler
+  const handleGoogleLogin = () => {
     setLoginLoading(true);
     setLoginError(null);
+    const provider = new GoogleAuthProvider();
 
-    signInWithEmailAndPassword(auth, email.trim(), password)
+    signInWithPopup(auth, provider)
       .then(() => {
         setLoginLoading(false);
-        setEmail('');
-        setPassword('');
       })
       .catch((error) => {
-        console.error("Login error:", error);
-        let korMessage = '로그인에 실패했어요. 아이디와 비밀번호를 확인해주세요.';
-        if (error.code === 'auth/invalid-email') {
-          korMessage = '이메일 형식이 올바르지 않아요.';
-        } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-          korMessage = '이메일 또는 비밀번호가 맞지 않아요.';
-        } else if (error.code === 'auth/too-many-requests') {
-          korMessage = '시도를 너무 많이 했어요. 잠시 후에 다시 해보세요.';
-        }
-        setLoginError(korMessage);
+        console.error("Google login error:", error);
+        setLoginError("구글 로그인 중에 문제가 생겼어요. 다시 시도해볼까요?");
         setLoginLoading(false);
       });
   };
@@ -385,6 +375,9 @@ function App() {
 
   const totalStatsCount = submissions.length;
 
+  // Authorization Check: Does the current Google UID match the registered Teacher UID?
+  const isTeacher = user ? user.uid === TEACHER_UID : false;
+
   return (
     <>
       {/* App Header */}
@@ -394,36 +387,109 @@ function App() {
         <p className="app-subtitle">오늘 내 마음은 어떤 색깔일까? 그림으로 그려보아요!</p>
       </header>
 
-      {/* STEP 0: Role Selection (Landing Page) */}
-      {role === 'select' && (
-        <div className="role-selection-container">
-          <button 
-            type="button" 
-            className="role-card" 
-            onClick={() => {
-              setRole('student');
-              handleRestartStudent();
-            }}
-          >
-            <span className="role-icon">🧒</span>
-            <h2 className="role-title">학생 입장</h2>
-            <p className="role-desc">오늘 기분을 선택하고 그림을 그려서 보관함에 넣어요!</p>
-          </button>
+      {/* STATE A: Google Login Required */}
+      {!user && (
+        <main className="cute-card" style={{ maxWidth: '500px', margin: '30px auto', textAlign: 'center' }}>
+          <h2 className="step-title">만나서 반가워요!</h2>
+          <p style={{ color: 'var(--secondary-text)', marginBottom: '24px' }}>
+            마음 그림판을 시작하기 위해 구글 로그인이 필요해요.
+          </p>
 
-          <button 
-            type="button" 
-            className="role-card" 
-            onClick={() => setRole('teacher')}
+          {loginError && (
+            <div style={{
+              color: '#C92A2A',
+              background: '#FFF5F5',
+              padding: '12px',
+              borderRadius: '12px',
+              border: '2px solid #FFA8A8',
+              fontSize: '1rem',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
+            }}>
+              <AlertCircle size={18} />
+              <span>{loginError}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="google-login-btn"
+            disabled={loginLoading}
+            onClick={handleGoogleLogin}
           >
-            <span className="role-icon">👩‍🏫</span>
-            <h2 className="role-title">교사 입장</h2>
-            <p className="role-desc">로그인하여 우리 반 친구들의 마음 통계와 갤러리를 보아요!</p>
+            {loginLoading ? (
+              <>
+                <RefreshCw size={20} className="spinner" /> 연결 중...
+              </>
+            ) : (
+              <>
+                {/* Cute custom Google SVG logo */}
+                <svg className="google-icon-svg" viewBox="0 0 24 24">
+                  <path fill="#EA4335" d="M12 5.04c1.67 0 3.19.57 4.37 1.7l3.26-3.26C17.65 1.58 14.97 1 12 1 7.37 1 3.4 3.65 1.58 7.5l3.86 3C6.37 7.74 8.97 5.04 12 5.04z" />
+                  <path fill="#4285F4" d="M23.45 12.3c0-.82-.07-1.6-.2-2.3H12v4.4h6.43c-.28 1.47-1.11 2.7-2.36 3.55l3.66 2.84c2.14-1.97 3.36-4.88 3.36-8.49z" />
+                  <path fill="#FBBC05" d="M5.44 14.5c-.24-.72-.37-1.48-.37-2.5s.13-1.78.37-2.5L1.58 6.5C.57 8.5 0 10.7 0 13s.57 4.5 1.58 6.5l3.86-3z" />
+                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.91l-3.66-2.84c-1.01.68-2.3 1.09-3.8 1.09-3.03 0-5.63-2.7-6.56-5.46l-3.86 3C3.4 20.35 7.37 23 12 23z" />
+                </svg>
+                Google 계정으로 로그인하기
+              </>
+            )}
           </button>
-        </div>
+        </main>
+      )}
+
+      {/* STATE B: Logged In user selection */}
+      {user && role === 'select' && (
+        <main className="cute-card" style={{ maxWidth: '500px', margin: '30px auto' }}>
+          {/* User profile card */}
+          <div className="selection-user-card">
+            {user.photoURL && (
+              <img src={user.photoURL} alt="프로필 사진" className="selection-user-avatar" />
+            )}
+            <h2 className="selection-user-name">반가워요, {user.displayName || '친구'}!</h2>
+            <span className="selection-user-email">{user.email}</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <button 
+              type="button" 
+              className="cute-btn cute-btn-primary" 
+              onClick={() => {
+                setRole('student');
+                handleRestartStudent();
+              }}
+            >
+              🧒 학생 입장 (그림 그리기)
+            </button>
+
+            {/* Show Teacher mode entrance only if user matches the teacher UID */}
+            {isTeacher && (
+              <button 
+                type="button" 
+                className="cute-btn" 
+                style={{ background: '#E2F9E5', color: '#2B8A3E', borderColor: '#A3E9B9', boxShadow: '0 4px 0px #A3E9B9' }}
+                onClick={() => setRole('teacher')}
+              >
+                👩‍🏫 교사 입장 (모니터링 대시보드)
+              </button>
+            )}
+
+            <button 
+              type="button" 
+              className="cute-btn cute-btn-back" 
+              style={{ marginTop: '12px' }}
+              onClick={handleLogout}
+            >
+              <LogOut size={20} /> 로그아웃
+            </button>
+          </div>
+        </main>
       )}
 
       {/* STUDENT FLOW */}
-      {role === 'student' && (
+      {user && role === 'student' && (
         <>
           {/* Header Action to go back to Home */}
           <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '16px' }}>
@@ -729,233 +795,145 @@ function App() {
       )}
 
       {/* TEACHER FLOW */}
-      {role === 'teacher' && (
+      {user && role === 'teacher' && isTeacher && (
         <div>
-          {/* TEACHER LOGGED OUT: Show Login Panel */}
-          {!teacherUser ? (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '16px' }}>
-                <button 
-                  className="tool-btn" 
-                  onClick={() => setRole('select')}
-                  style={{ borderRadius: '16px', padding: '8px 16px' }}
-                >
-                  <Home size={18} /> 처음 화면으로
-                </button>
-              </div>
-
-              <main className="cute-card" style={{ maxWidth: '500px', margin: '0 auto' }}>
-                <h2 className="step-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                  <GraduationCap size={28} style={{ color: '#E8590C' }} /> 교사 로그인
-                </h2>
-                
-                <form onSubmit={handleLogin} className="login-form-container">
-                  <div className="form-group">
-                    <label htmlFor="teacher-email">
-                      <Mail size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} /> 
-                      이메일 아이디
-                    </label>
-                    <input
-                      id="teacher-email"
-                      type="email"
-                      placeholder="teacher@example.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label htmlFor="teacher-password">
-                      <Lock size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} /> 
-                      비밀번호
-                    </label>
-                    <input
-                      id="teacher-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  {loginError && (
-                    <div style={{
-                      color: '#C92A2A',
-                      background: '#FFF5F5',
-                      padding: '12px',
-                      borderRadius: '12px',
-                      border: '2px solid #FFA8A8',
-                      fontSize: '1rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}>
-                      <AlertCircle size={18} />
-                      <span>{loginError}</span>
-                    </div>
-                  )}
-
-                  <button
-                    type="submit"
-                    className="cute-btn cute-btn-primary"
-                    disabled={loginLoading}
-                    style={{ marginTop: '8px' }}
-                  >
-                    {loginLoading ? (
-                      <>
-                        <RefreshCw size={20} className="spinner" /> 로그인 중...
-                      </>
-                    ) : (
-                      <>로그인하기</>
-                    )}
-                  </button>
-                </form>
-              </main>
+          {/* Dashboard Navigation/Header Bar */}
+          <div className="dashboard-header-bar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className="teacher-badge-info">
+                <GraduationCap size={18} /> 교사 모드
+              </span>
+              <span style={{ color: 'var(--secondary-text)', fontSize: '1.1rem' }}>
+                {user.email} 계정으로 관리 중
+              </span>
             </div>
-          ) : (
-            /* TEACHER LOGGED IN: Show Dashboard Panel */
-            <div>
-              {/* Dashboard Navigation/Header Bar */}
-              <div className="dashboard-header-bar">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="teacher-badge-info">
-                    <GraduationCap size={18} /> 교사 모드
-                  </span>
-                  <span style={{ color: 'var(--secondary-text)', fontSize: '1.1rem' }}>
-                    {teacherUser.email} 계정으로 관리 중
-                  </span>
-                </div>
 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button 
-                    className="tool-btn"
-                    onClick={() => setRole('select')}
-                  >
-                    <Home size={16} /> 첫 화면으로
-                  </button>
-                  <button 
-                    className="tool-btn" 
-                    onClick={handleLogout}
-                    style={{ border: '3px solid #FFC9C9', color: '#FA5252' }}
-                  >
-                    <LogOut size={16} /> 로그아웃
-                  </button>
-                </div>
-              </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                className="tool-btn"
+                onClick={() => setRole('select')}
+              >
+                <Home size={16} /> 첫 화면으로
+              </button>
+              <button 
+                className="tool-btn" 
+                onClick={handleLogout}
+                style={{ border: '3px solid #FFC9C9', color: '#FA5252' }}
+              >
+                <LogOut size={16} /> 로그아웃
+              </button>
+            </div>
+          </div>
 
-              {/* Main Dashboard Two-Column Grid */}
-              <div className="teacher-dashboard-layout">
-                {/* LEFT COLUMN: Statistics Panel */}
-                <section className="cute-card" style={{ padding: '24px' }}>
-                  <h3 className="dashboard-panel-title">
-                    <BarChart3 size={20} style={{ color: '#E8590C' }} /> 
-                    우리 반 마음 통계 현황
-                  </h3>
+          {/* Main Dashboard Two-Column Grid */}
+          <div className="teacher-dashboard-layout">
+            {/* LEFT COLUMN: Statistics Panel */}
+            <section className="cute-card" style={{ padding: '24px' }}>
+              <h3 className="dashboard-panel-title">
+                <BarChart3 size={20} style={{ color: '#E8590C' }} /> 
+                우리 반 마음 통계 현황
+              </h3>
 
-                  <div className="cute-bar-chart">
-                    {(Object.keys(EMOTIONS) as EmotionKey[]).map((key) => {
-                      const item = EMOTIONS[key];
-                      const count = stats[key];
-                      const percent = totalStatsCount > 0 ? Math.round((count / totalStatsCount) * 100) : 0;
+              <div className="cute-bar-chart">
+                {(Object.keys(EMOTIONS) as EmotionKey[]).map((key) => {
+                  const item = EMOTIONS[key];
+                  const count = stats[key];
+                  const percent = totalStatsCount > 0 ? Math.round((count / totalStatsCount) * 100) : 0;
+                  
+                  return (
+                    <div key={key} className="cute-bar-row">
+                      <span className="cute-bar-label">
+                        <span>{item.emoji}</span>
+                        <span>{item.label.substring(0,2)}</span>
+                      </span>
                       
-                      return (
-                        <div key={key} className="cute-bar-row">
-                          <span className="cute-bar-label">
-                            <span>{item.emoji}</span>
-                            <span>{item.label.substring(0,2)}</span>
-                          </span>
-                          
-                          <div className="cute-bar-container">
-                            <div 
-                              className={`cute-bar-fill ${item.class}`}
-                              style={{ width: `${percent}%`, minWidth: percent > 0 ? '12px' : '0' }}
-                            />
-                          </div>
-
-                          <span className="cute-bar-value">
-                            {count}명
-                            <span className="cute-bar-percent">({percent}%)</span>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ 
-                    marginTop: '24px', 
-                    padding: '16px', 
-                    background: '#FFFDF9', 
-                    border: '2px dashed #E6DCD0', 
-                    borderRadius: '16px',
-                    fontSize: '1rem',
-                    color: 'var(--secondary-text)',
-                    textAlign: 'center'
-                  }}>
-                    총 제출 건수: <strong>{totalStatsCount}건</strong> (최근 100개 기준)
-                  </div>
-                </section>
-
-                {/* RIGHT COLUMN: Gallery Panel */}
-                <section className="cute-card" style={{ padding: '24px' }}>
-                  <h3 className="dashboard-panel-title">
-                    <ImageIcon size={20} style={{ color: '#E8590C' }} /> 
-                    우리 반 마음 그림 갤러리
-                  </h3>
-
-                  <div className="history-grid">
-                    {submissions.length === 0 ? (
-                      <div className="no-history">
-                        <div className="no-history-icon">🎨</div>
-                        <div>아직 학생들이 그린 그림이 없어요.</div>
+                      <div className="cute-bar-container">
+                        <div 
+                          className={`cute-bar-fill ${item.class}`}
+                          style={{ width: `${percent}%`, minWidth: percent > 0 ? '12px' : '0' }}
+                        />
                       </div>
-                    ) : (
-                      submissions.map((sub) => {
-                        const emotionDetails = EMOTIONS[sub.emotion];
-                        return (
-                          <div key={sub.id} className="history-card">
-                            <div className="history-card-header">
-                              <span className="student-name-badge">{sub.name}</span>
-                              <div className="history-card-header-actions">
-                                <span className={`emotion-badge ${emotionDetails?.class}`}>
-                                  {emotionDetails?.emoji} {emotionDetails?.label}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="delete-submission-btn"
-                                  onClick={() => handleDeleteSubmission(sub.id, sub.imageUrl)}
-                                  title="그림 삭제"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </div>
-                            
-                            <div className="history-drawing-container">
-                              {sub.imageUrl ? (
-                                <img 
-                                  src={sub.imageUrl} 
-                                  alt={`${sub.name}의 그림`} 
-                                  className="history-drawing"
-                                />
-                              ) : (
-                                <div style={{ fontSize: '0.9rem', color: '#ADB5BD' }}>불러오는 중...</div>
-                              )}
-                            </div>
 
-                            <div className="history-card-footer">
-                              <span>{formatDate(sub.createdAt)}</span>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </section>
+                      <span className="cute-bar-value">
+                        {count}명
+                        <span className="cute-bar-percent">({percent}%)</span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+
+              <div style={{ 
+                marginTop: '24px', 
+                padding: '16px', 
+                background: '#FFFDF9', 
+                border: '2px dashed #E6DCD0', 
+                borderRadius: '16px',
+                fontSize: '1rem',
+                color: 'var(--secondary-text)',
+                textAlign: 'center'
+              }}>
+                총 제출 건수: <strong>{totalStatsCount}건</strong> (최근 100개 기준)
+              </div>
+            </section>
+
+            {/* RIGHT COLUMN: Gallery Panel */}
+            <section className="cute-card" style={{ padding: '24px' }}>
+              <h3 className="dashboard-panel-title">
+                <ImageIcon size={20} style={{ color: '#E8590C' }} /> 
+                우리 반 마음 그림 갤러리
+              </h3>
+
+              <div className="history-grid">
+                {submissions.length === 0 ? (
+                  <div className="no-history">
+                    <div className="no-history-icon">🎨</div>
+                    <div>아직 학생들이 그린 그림이 없어요.</div>
+                  </div>
+                ) : (
+                  submissions.map((sub) => {
+                    const emotionDetails = EMOTIONS[sub.emotion];
+                    return (
+                      <div key={sub.id} className="history-card">
+                        <div className="history-card-header">
+                          <span className="student-name-badge">{sub.name}</span>
+                          <div className="history-card-header-actions">
+                            <span className={`emotion-badge ${emotionDetails?.class}`}>
+                              {emotionDetails?.emoji} {emotionDetails?.label}
+                            </span>
+                            <button
+                              type="button"
+                              className="delete-submission-btn"
+                              onClick={() => handleDeleteSubmission(sub.id, sub.imageUrl)}
+                              title="그림 삭제"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        
+                        <div className="history-drawing-container">
+                          {sub.imageUrl ? (
+                            <img 
+                              src={sub.imageUrl} 
+                              alt={`${sub.name}의 그림`} 
+                              className="history-drawing"
+                            />
+                          ) : (
+                            <div style={{ fontSize: '0.9rem', color: '#ADB5BD' }}>불러오는 중...</div>
+                          )}
+                        </div>
+
+                        <div className="history-card-footer">
+                          <span>{formatDate(sub.createdAt)}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          </div>
         </div>
       )}
     </>
