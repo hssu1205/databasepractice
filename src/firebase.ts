@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -23,8 +24,20 @@ export const isFirebaseConfigured = (): boolean => {
 // Firebase 앱 싱글톤 초기화
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Firestore 및 Cloud Storage 인스턴스
+// Firestore, Cloud Storage, Auth 인스턴스
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+
+// 교사 UID 검증 헬퍼
+export const checkIsTeacher = (uid: string | undefined | null): boolean => {
+  if (!uid) return false;
+  const configuredUids = (import.meta.env.VITE_TEACHER_UID || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  return configuredUids.includes(uid);
+};
 
 export default app;

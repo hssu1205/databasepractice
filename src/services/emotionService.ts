@@ -1,7 +1,14 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  onSnapshot
+} from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
-import type { EmotionType } from '../types/emotion';
+import type { EmotionType, EmotionRecord } from '../types/emotion';
 
 export interface SaveEmotionParams {
   studentName: string;
@@ -28,10 +35,9 @@ export async function saveEmotionRecord({
   imageBlob
 }: SaveEmotionParams): Promise<SaveResult> {
   const timestamp = Date.now();
-  // 파일명 안전하게 처리 (특수문자 제거)
   const safeName = studentName.replace(/[^a-zA-Z0-9가-힣_-]/g, '') || 'student';
   const filePath = `drawings/${timestamp}_${safeName}.jpg`;
-  
+
   // 1. Firebase Storage에 JPG 이미지 업로드
   const storageRef = ref(storage, filePath);
   const metadata = {
@@ -59,4 +65,39 @@ export async function saveEmotionRecord({
     docId: docRef.id,
     imageUrl
   };
+}
+
+/**
+ * 교사용 모드: 학생들이 제출한 정서 및 그림 기록을 실시간 구독(onSnapshot)합니다.
+ */
+export function subscribeToEmotionRecords(
+  onData: (records: EmotionRecord[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const q = query(collection(db, 'emotions'), orderBy('createdAt', 'desc'));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snapshot) => {
+      const records: EmotionRecord[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          studentName: data.studentName || '이름 없음',
+          emotion: data.emotion as EmotionType,
+          emotionLabel: data.emotionLabel || '',
+          emotionEmoji: data.emotionEmoji || '🌱',
+          imageUrl: data.imageUrl || '',
+          createdAt: data.createdAt
+        };
+      });
+      onData(records);
+    },
+    (err) => {
+      console.error('Firestore 구독 에러:', err);
+      if (onError) onError(err);
+    }
+  );
+
+  return unsubscribe;
 }
